@@ -1,8 +1,21 @@
 import streamlit as st
 import pandas as pd
-from openai import OpenAI
+
+try:
+    from openai import OpenAI
+
+    def create_client(key: str):
+        return OpenAI(api_key=key)
+except Exception:  # fallback for openai<1.0
+    import openai
+
+    def create_client(key: str):
+        openai.api_key = key
+        return openai
 
 st.set_page_config(page_title="InsightVault", layout="wide")
+
+SAMPLE_DATA = "sample_data.csv"
 
 st.title("🔐 InsightVault: Your AI-Powered Data Vault")
 
@@ -18,23 +31,41 @@ with st.sidebar:
 
 # Check user session
 if user_email and password:
-    st.subheader("📂 Upload Your Data (CSV)")
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+    st.subheader("📂 Select Data Source")
+    source = st.radio("Choose data source", ["Upload CSV", "Use sample data"])
 
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
+    df = None
+    if source == "Upload CSV":
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+        if uploaded_file:
+            df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_csv(SAMPLE_DATA)
+
+    if df is not None:
         st.write("✅ Data Preview:")
         st.dataframe(df.head())
+
+        query = st.text_input("🔍 Search data")
+        if query:
+            results = df[df.astype(str).apply(lambda row: row.str.contains(query, case=False, na=False).any(), axis=1)]
+            st.write(f"Results: {len(results)} row(s)")
+            st.dataframe(results)
 
         # AI summary
         st.subheader("🤖 AI Summary")
         openai_key = st.text_input("Enter your OpenAI API Key:", type="password")
-        if openai_key:
-            client = OpenAI(api_key=openai_key)
-            if st.button("Generate AI Insight"):
+        if openai_key and st.button("Generate AI Insight"):
+            client = create_client(openai_key)
+            with st.spinner("Generating insight..."):
                 try:
                     summary = df.describe(include='all').to_string()
-                    prompt = f"Analyze this user-uploaded dataset and summarize any patterns, trends, or insights:\n{summary}"
+                    if len(summary) > 1000:
+                        summary = summary[:1000]
+                    prompt = (
+                        "Analyze this dataset and summarize any patterns, trends, "
+                        f"or insights:\n{summary}"
+                    )
 
                     response = client.chat.completions.create(
                         model="gpt-3.5-turbo",
